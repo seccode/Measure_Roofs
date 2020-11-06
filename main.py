@@ -51,7 +51,7 @@ def get_camera_lat_lng(_lat, _lng, _dist, pitch, head):
 
     return (np.degrees(phi2), lng)
 
-def get_image_position(f, top_view=None):
+def get_image_position(f, primary_view=None):
     params = f.lstrip("imgs/").rstrip(".png").split("_")
 
     _lat, _lng, _dist = float(params[0]), float(params[1]), float(params[3][:-1])
@@ -76,8 +76,9 @@ def get_image_position(f, top_view=None):
                 "pitch": pitch - 90,
                 "fov": fov
                 }
-    if top_view:
-        x, y = get_x_y(lat, lng, top_view["position"])
+
+    if primary_view:
+        x, y = get_x_y(lat, lng, primary_view["position"])
         position["x"] = x
         position["y"] = y
 
@@ -89,17 +90,6 @@ def get_pitch_and_heading_between_positions(pos1, pos2):
     pitch = np.arctan2(np.sqrt(dz**2 + dx**2), dy) + np.pi
     return (pitch, heading)
 
-def get_ground_position(camera_pos):
-    ground_dist = np.sin(np.radians(camera_pos["pitch"]))
-    g_x = camera_pos['x'] + ground_dist * np.sin(np.radians(camera_pos["head"]))
-    g_y = camera_pos['y'] + ground_dist * np.cos(np.radians(camera_pos["head"]))
-
-    return (g_x, g_y, 0)
-
-def get_position_ranges(camera_pos, ground_pos):
-    return [np.linspace(start, end, 300)
-        for start, end in zip((camera_pos['x'], camera_pos['y'], camera_pos['z']), ground_pos)]
-
 def get_distance_between_positions(pos1, pos2):
     return np.sqrt((pos1[0] - pos2[0])**2 + \
                    (pos1[1] - pos2[1])**2 + \
@@ -108,25 +98,61 @@ def get_distance_between_positions(pos1, pos2):
 def get_midpoint_between_positions(pos1, pos2):
     return [(p1 + p2) / 2 for p1, p2 in zip(pos1, pos2)]
 
+def get_position_at_z(camera_position, z=0):
+    # print("x: {}\ny: {}\nz: {}\npitch: {}\nheading: {}\n".format(
+        # camera_position['x'], camera_position['y'], camera_position['z'], camera_position['pitch'], camera_position['head']))
+
+    if z == camera_position['z']:
+        return (camera_position['x'], camera_position['y'], camera_position['z'])
+
+    Y = np.cos(np.radians(camera_position["head"])) * (camera_position['z'] - z) / \
+        np.tan(np.radians(-camera_position["pitch"]))
+    
+    X = Y * np.tan(np.radians(camera_position["head"]))
+
+    return (camera_position['x'] + X, camera_position['y'] + Y, z)
+
+def get_closest_position_between_ranges(range1,range2):
+    position = None
+    min_dist = float("inf")
+    for p1 in range1:
+        for p2 in range2:
+            dist = get_distance_between_positions(p1,p2)
+            if dist < min_dist:
+                min_dist = dist
+                position = get_midpoint_between_positions(p1,p2)
+
+    return position
+
+def plot_3D(range1, range2, midpoint):
+        fig = plt.figure()
+        ax = fig.add_subplot(111, projection='3d')
+        for p1, p2 in zip(range1,range2):
+            ax.scatter3D(p1[0],p1[1],p1[2],c='b')
+            ax.scatter3D(p2[0],p2[1],p2[2],c='r')
+        
+        ax.scatter3D(midpoint[0],midpoint[1],midpoint[2],c='g')
+        ax.set_xlabel('x')
+        ax.set_ylabel('y')
+        ax.set_zlabel('z')
+        plt.show()
+
 def get_pixel_world_position(camera_pos1, camera_pos2):
-    ground_pos1, ground_pos2 = \
-        (get_ground_position(c) for c in (camera_pos1, camera_pos2))
+    c1 = np.array([camera_pos1['x'], camera_pos1['y'], camera_pos1['z']])
+    c2 = np.array([camera_pos2['x'], camera_pos2['y'], camera_pos2['z']])
 
-    ranges1, ranges2 = (get_position_ranges(c, g)
-        for c, g in zip([camera_pos1, camera_pos2], [ground_pos1, ground_pos2]))
+    range1 = list(map(lambda z: get_position_at_z(camera_pos1,z),np.linspace(c1[-1],0)))
+    range2 = list(map(lambda z: get_position_at_z(camera_pos2,z),np.linspace(c2[-1],0)))
 
-    min_val = float("inf")
-    world_position = None
+    print("\tC1\n-----------------\nx: {}\ny: {}\nz: {}\n".format(*c1))
+    print("\tC2\n-----------------\nx: {}\ny: {}\nz: {}\n".format(*c2))
 
-    for i in range(300):
-        pos1 = (ranges1[0][i], ranges1[1][i], ranges1[2][i])
-        pos2 = (ranges2[0][i], ranges2[1][i], ranges2[2][i])
-        dist = get_distance_between_positions(pos1, pos2)
-        if dist < min_val:
-            min_val = dist
-            world_position = get_midpoint_between_positions(pos1, pos2)
+    world_position = get_closest_position_between_ranges(range1,range2)
+
+    plot_3D(range1, range2, world_position)
 
     return world_position
+    
 
 def get_pitch_and_heading(camera_position, pixel_pos, frame_shape):
     rel_frame_width = 2 * np.tan(np.radians(camera_position["fov"] / 2))
@@ -141,14 +167,17 @@ def get_pitch_and_heading(camera_position, pixel_pos, frame_shape):
     pixel_pos = [
         rel_pixel_x_pos,
         np.cos(_pitch) + np.sin(_pitch) * rel_pixel_r_pos,
-        np.sin(_pitch) + np.cos(_pitch) * rel_pixel_r_pos
+        np.sin(_pitch) - np.cos(_pitch) * rel_pixel_r_pos
     ]
 
     theta = np.degrees(np.arctan2(pixel_pos[1], pixel_pos[0]))
     phi = np.degrees(np.arctan2(np.sqrt(pixel_pos[0]**2 + pixel_pos[1]**2), -pixel_pos[2]))
 
-    new_heading = camera_position["head"] + (90 - theta)
+    new_heading = camera_position["head"] + (theta - 90)
     new_pitch = phi - 90
+
+    print(camera_position["pitch"])
+    print(new_pitch)
 
     return (new_pitch, new_heading)
 
@@ -189,21 +218,21 @@ if __name__ == "__main__":
     image_map = get_images()
 
     img1_pts = [
-        (698, 353),
-        (856, 227),
-        (1002, 328),
-        (1197, 673),
-        (1020, 586),
-        (803, 735)
+        (2236, 981),
+        (2026, 984),
+        (1740, 1314),
+        (990, 658),
+        (1229, 357),
+        (1483, 435)
     ]
 
     img2_pts = [
-        (971, 316),
-        (1129, 241),
-        (1271, 385),
-        (1125, 749),
-        (924, 576),
-        (735, 646)
+        (1580, 1458),
+        (1285, 1103),
+        (1044, 1107),
+        (1787, 479),
+        (2069, 435),
+        (2292, 739)
     ]
 
     def onclick(event):
@@ -213,6 +242,7 @@ if __name__ == "__main__":
     # cid = fig.canvas.mpl_connect("button_press_event", onclick)
     # plt.imshow(image_map["view_1"]["img"])
     # plt.show()
+    # a
 
     frame_shape = image_map["view_0"]["img"].shape
     roof_positions = []
@@ -228,4 +258,17 @@ if __name__ == "__main__":
 
         pos = get_pixel_world_position(c1, c2)
         roof_positions.append(pos)
-
+    
+    def show_roof():
+        fig = plt.figure()
+        ax = fig.add_subplot(111, projection='3d')
+        for pos in roof_positions:
+            ax.scatter3D(pos[0],pos[1],pos[2],c='b')
+        
+        ax.set_xlabel('x')
+        ax.set_ylabel('y')
+        ax.set_zlabel('z')
+        plt.show()
+    
+    print(roof_positions)
+    show_roof()
