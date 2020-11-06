@@ -73,7 +73,7 @@ def get_image_position(f, top_view=None):
                 "y": 0,
                 "z": alt,
                 "head": head,
-                "pitch": pitch,
+                "pitch": pitch - 90,
                 "fov": fov
                 }
     if top_view:
@@ -115,7 +115,6 @@ def get_pixel_world_position(camera_pos1, camera_pos2):
     ranges1, ranges2 = (get_position_ranges(c, g)
         for c, g in zip([camera_pos1, camera_pos2], [ground_pos1, ground_pos2]))
 
-    print(ranges1)
     min_val = float("inf")
     world_position = None
 
@@ -130,34 +129,26 @@ def get_pixel_world_position(camera_pos1, camera_pos2):
     return world_position
 
 def get_pitch_and_heading(camera_position, pixel_pos, frame_shape):
-    rel_frame_width = 2 * np.tan(np.radians(camera_position["fov"]))
+    rel_frame_width = 2 * np.tan(np.radians(camera_position["fov"] / 2))
     rel_frame_height = 2 * np.tan(np.radians((
-        frame_shape[0] / frame_shape[1]) * camera_position["fov"]))
+        frame_shape[0] / frame_shape[1]) * camera_position["fov"] / 2))
 
-    """
-    Camera Position = (0, 0, 0)
-    Frame Center Position = (0, cos(pitch), sin(pitch))
-    Frame Pixel Position (FPP) = (rel_pixel_x_pos,
-                            cos(pitch) + sin(pitch) * rel_pixel_z_pos,
-                            sin(pitch) + cos(pitch) * rel_pixel_z_pos)
-    
-    Camera to Pixel Pitch = arctan2(sqrt(FPP.x**2 + FPP.z**2), FPP.y) + pi
-    Camera to Pixel Heading = arctan2(FPP.z, FPP.x)
-    """
-
-    rel_pixel_x_pos = ((pixel_pos[0] - frame_shape[0]) / frame_shape[0]) * rel_frame_width
-    rel_pixel_z_pos = ((pixel_pos[1] - frame_shape[1]) / frame_shape[1]) * rel_frame_height
+    rel_pixel_x_pos = (((frame_shape[1] - pixel_pos[0]) / frame_shape[1]) - 0.5) * rel_frame_width
+    rel_pixel_r_pos = (((frame_shape[0] - pixel_pos[1]) / frame_shape[0]) - 0.5) * rel_frame_height
 
     _pitch = np.radians(camera_position["pitch"])
 
-    pixel_pos = (
+    pixel_pos = [
         rel_pixel_x_pos,
-        np.cos(_pitch) + np.sin(_pitch) * rel_pixel_z_pos,
-        np.sin(_pitch) + np.cos(_pitch) * rel_pixel_z_pos
-    )
+        np.cos(_pitch) + np.sin(_pitch) * rel_pixel_r_pos,
+        np.sin(_pitch) + np.cos(_pitch) * rel_pixel_r_pos
+    ]
 
-    new_pitch = np.arctan2(np.sqrt(pixel_pos[0]**2 + pixel_pos[2]**2), pixel_pos[1]) * np.pi
-    new_heading = camera_position["head"] + np.arctan2(pixel_pos[2], pixel_pos[0])
+    theta = np.degrees(np.arctan2(pixel_pos[1], pixel_pos[0]))
+    phi = np.degrees(np.arctan2(np.sqrt(pixel_pos[0]**2 + pixel_pos[1]**2), -pixel_pos[2]))
+
+    new_heading = camera_position["head"] + (90 - theta)
+    new_pitch = phi - 90
 
     return (new_pitch, new_heading)
 
@@ -198,31 +189,32 @@ if __name__ == "__main__":
     image_map = get_images()
 
     img1_pts = [
-        (427, 399),
-        (577, 245),
-        (741, 330),
-        (1027, 635),
-        (836, 584),
-        (635, 780)
+        (698, 353),
+        (856, 227),
+        (1002, 328),
+        (1197, 673),
+        (1020, 586),
+        (803, 735)
     ]
 
     img2_pts = [
-        (938, 300),
-        (1096, 224),
-        (1232, 369),
-        (1042, 752),
-        (841, 573),
-        (660, 635)
+        (971, 316),
+        (1129, 241),
+        (1271, 385),
+        (1125, 749),
+        (924, 576),
+        (735, 646)
     ]
 
+    def onclick(event):
+        print((int(event.xdata), int(event.ydata)))
+
+    # fig = plt.figure()
+    # cid = fig.canvas.mpl_connect("button_press_event", onclick)
+    # plt.imshow(image_map["view_1"]["img"])
+    # plt.show()
+
     frame_shape = image_map["view_0"]["img"].shape
-
-    plt.imshow(image_map["view_0"]["img"])
-
-    for p in img1_pts:
-        plt.scatter(p[0], p[1], c='r')
-    plt.show()
-
     roof_positions = []
     
     for p1, p2 in zip(img1_pts, img2_pts):
@@ -237,4 +229,3 @@ if __name__ == "__main__":
         pos = get_pixel_world_position(c1, c2)
         roof_positions.append(pos)
 
-    print(roof_positions)
