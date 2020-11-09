@@ -134,4 +134,5 @@ chromedriver
 *.png
 *.jpg
 *.jpeg
-imgs/
+images/
+points/
