@@ -102,7 +102,6 @@ class Mapper:
 
         if primary_view:
             x, y = get_x_y_between_coords(lat, lng, primary_view["position"])
-            print(x, y)
             position["x"] = x
             position["y"] = y
 
@@ -124,31 +123,42 @@ class Mapper:
             np.save("points/" + str(i), points)
             print("\n")
 
-    def load_views(self):
+    def load_polygons(self, image_file):
+        polygon_file = image_file.rstrip(".png") + ".json"
+        if os.path.isfile(polygon_file):
+            data = json.load(open(polygon_file))
+            return data["shapes"]
+        
+        return None
+
+    def load_views(self, image_list=None):
         self.views = []
 
-        images = sorted(glob.glob("images/*"), key=os.path.getctime)
+        if image_list:
+            images = image_list
+        else:
+            images = sorted(glob.glob("images/*.png"), key=os.path.getctime)
 
         for i, image in enumerate(images):
             self.views.append({
                 "image": plt.imread(image),
-                "points": np.load("points/" + str(i) + ".npy")
+                "polygons": self.load_polygons(image)
             })
             if i == 0:
-                print(image)
                 self.views[-1]["position"] = self.get_camera_position(image)
             else:
                 self.views[-1]["position"] = self.get_camera_position(image, self.views[0])
 
         return
     
-    def plot_3D_roof(self, roof_positions):
+    def plot_3D_roof(self, faces):
         # Plot the 3D positions of the roof
         fig = plt.figure()
         ax = fig.add_subplot(111, projection='3d')
 
-        for i, pos in enumerate(roof_positions):
-            ax.scatter3D(pos[0],pos[1],pos[2],c='b')
+        for i, face in enumerate(faces):
+            for pos in face:
+                ax.scatter3D(pos[0],pos[1],pos[2],c='b')
         
         ax.set_xlabel('x')
         ax.set_ylabel('y')
@@ -183,7 +193,7 @@ class Mapper:
             pixel_h_pos * np.cos(_pitch)
         )
 
-        return frame_relative_pixel_position, (pixel_w_pos, pixel_h_pos)
+        return frame_relative_pixel_position
 
     def get_camera_relative_pixel_position(self, camera_position, pixel, frame_shape):
         # Get cartesian position of pixel assuming frame is orthogonal
@@ -191,31 +201,21 @@ class Mapper:
         # of 1 away from the camera position. Assumption is also made that
         # heading towards center of frame is 0, as this simplifies calculations
 
-        def pointed_north(camera_position):
-            normalized_heading = camera_position["heading"] % 360
-            if (normalized_heading < 90 and normalized_heading > 0) or \
-                (normalized_heading <= 0 and normalized_heading > -90):
-                return 1
-            else:
-                return -1
-
-        frame_relative_pixel_position, f = self.get_frame_relative_pixel_position(
+        frame_relative_pixel_position = self.get_frame_relative_pixel_position(
             camera_position, pixel, frame_shape)
         
         _pitch = np.radians(camera_position["pitch"] - 90)
         
-        is_pointed_north = pointed_north(camera_position)
-
-        X = (np.cos(_pitch) + frame_relative_pixel_position[0]) * -is_pointed_north
-        Y = frame_relative_pixel_position[1] * is_pointed_north
+        X = (np.cos(_pitch) + frame_relative_pixel_position[0])
+        Y = -frame_relative_pixel_position[1]
         Z = -np.sin(_pitch) + frame_relative_pixel_position[2]
 
-        return (X, Y, Z, f)
+        return (X, Y, Z)
 
     def get_pointed_camera_position(self, camera_position, pixel, frame_shape):
         # Get the pitch and heading that point towards the pixel
 
-        x, y, z, f = self.get_camera_relative_pixel_position(camera_position, pixel, frame_shape)
+        x, y, z = self.get_camera_relative_pixel_position(camera_position, pixel, frame_shape)
 
         _, theta, phi = cartesian_to_spherical(x, y, z)
 
@@ -223,7 +223,7 @@ class Mapper:
         pointed_camera_position["heading"] += theta
         pointed_camera_position["pitch"] = phi
 
-        return pointed_camera_position, f
+        return pointed_camera_position
 
     def get_camera_position_at_z(self, camera_position, z):
         if z == camera_position['z']:
@@ -241,17 +241,17 @@ class Mapper:
         return [camera_position['x'] + X, camera_position['y'] + Y, z]
 
     def get_distance_between_positions(self, p1, p2):
-        return np.sqrt(
-            (p1[0] - p2[0])**2 + \
-            (p1[1] - p2[1])**2 + \
-            (p1[2] - p2[2])**2)
+        return np.sqrt((p1[0] - p2[0])**2 + \
+                        (p1[1] - p2[1])**2 + \
+                        (p1[2] - p2[2])**2)
     
     def get_midpoint_between_positions(self, p1, p2):
-        return (
-            (p1[0] + p2[0]) / 2,
-            (p1[1] + p2[1]) / 2,
-            (p1[2] + p2[2]) / 2
-            )
+        return ((p1[0] + p2[0]) / 2,
+                (p1[1] + p2[1]) / 2,
+                (p1[2] + p2[2]) / 2)
+    
+    def meters_to_feet(self, d):
+        return d * 3.281
 
     def get_closest_position_between_view_lines(self, view_lines):
         min_dist = float("inf")
@@ -316,48 +316,38 @@ class Mapper:
         return
 
     def get_3D_roof_positions(self):
-        roof_positions = []
-        
-        relative_frame_shape = self.get_relative_frame_shape(self.views[0]["position"], self.views[0]["image"].shape)
-
         # Get camera positions that point to roof points
         for i, view in enumerate(self.views):
-            rel_pp = []
-            pointed_camera_positions = []
-            for pixel in view["points"]:
-                pointed_camera_position, rel_pix_pos = \
-                    self.get_pointed_camera_position(
-                        view["position"],
-                        pixel,
-                        view["image"].shape)
+            face_views = []
+            for polygon in view["polygons"]:
+                face = []
+                for point in polygon["points"]:
+                    point_position = self.get_pointed_camera_position(
+                            view["position"], point, view["image"].shape)
 
-                pointed_camera_positions.append(pointed_camera_position)
-                rel_pp.append(rel_pix_pos)
+                    face.append(point_position)
 
-            self.views[i]["pointed_positions"] = pointed_camera_positions
+                face_views.append(face)
+
+            self.views[i]["face_views"] = face_views
             # self.plot_pointed_positions(pointed_camera_positions)
-        
-
-            plt.xlim(-relative_frame_shape[0] / 2, relative_frame_shape[0] / 2)
-            plt.ylim(-relative_frame_shape[1] / 2, relative_frame_shape[1] / 2)
-
-            for i, p in enumerate(rel_pp):
-                plt.scatter(p[0], p[1],c='b')
-            plt.show()
 
         # Get roof positions from pointed positions
-        for p1, p2 in zip(self.views[0]["pointed_positions"], self.views[1]["pointed_positions"]):
+        faces_positions = []
+        for face1, face2 in zip(self.views[0]["face_views"], self.views[1]["face_views"]):
+            face_positions = []
+            for p1, p2 in zip(face1, face2):
 
-            roof_position = self.get_closest_position_between_views(p1, p2)
-            roof_positions.append(roof_position)
+                roof_position = self.get_closest_position_between_views(p1, p2)
+                face_positions.append(roof_position)
+            
+            faces_positions.append(face_positions)
 
-        return roof_positions
+        return faces_positions
 
 if __name__ == "__main__":
     mapper = Mapper()
     mapper.load_views()
 
-    # mapper.label_roof_pixels()
-
-    roof_positions = mapper.get_3D_roof_positions()
-    mapper.plot_3D_roof(roof_positions)
+    faces_positions = mapper.get_3D_roof_positions()
+    mapper.plot_3D_roof(faces_positions)
