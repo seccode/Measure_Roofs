@@ -131,8 +131,6 @@ dmypy.json
 # Custom
 chromedriver
 *.DS_Store
-*.png
-*.jpg
-*.jpeg
-images/
-points/
+*/*.png
+*/*.jpg
+*/*.jpeg

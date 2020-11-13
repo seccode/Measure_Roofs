@@ -75,9 +75,6 @@ class Measurer:
                     
                     point_positions.append(point_position)
             
-            plt.close()
-            mapper.plot_pointed_positions(point_positions)
-            
             roof_points = []
             for i in range(2):
                 roof_point = mapper.get_closest_position_between_views(
@@ -87,6 +84,9 @@ class Measurer:
 
             res = mapper.get_distance_between_positions(*roof_points)
             dist = mapper.meters_to_feet(res)
+
+            # plt.close()
+            # mapper.plot_pointed_positions(point_positions, roof_points)
 
             print("Distance: {} ft.".format(dist))
         

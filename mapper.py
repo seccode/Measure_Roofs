@@ -295,7 +295,7 @@ class Mapper:
 
         return self.get_closest_position_between_view_lines(view_lines)
 
-    def plot_pointed_positions(self, pointed_positions):
+    def plot_pointed_positions(self, pointed_positions, roof_points=None):
         fig = plt.figure()
         ax = fig.add_subplot(111, projection='3d')
 
@@ -307,6 +307,22 @@ class Mapper:
                 [position['y'], end[1]],
                 [position['z'], end[2]],
                 c='b'
+            )
+        
+        if roof_points:
+            for roof_point in roof_points:
+                ax.scatter(
+                    roof_point[0],
+                    roof_point[1],
+                    roof_point[2],
+                    c='r'
+                )
+            
+            ax.plot(
+                [roof_points[0][0], roof_points[1][0]],
+                [roof_points[0][1], roof_points[1][1]],
+                [roof_points[0][2], roof_points[1][2]],
+                c='g'
             )
 
         ax.set_xlabel('x')
