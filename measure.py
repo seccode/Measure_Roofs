@@ -75,8 +75,8 @@ class Measurer:
                     
                     point_positions.append(point_position)
             
-            # plt.close()
-            # mapper.plot_pointed_positions(point_positions)
+            plt.close()
+            mapper.plot_pointed_positions(point_positions)
             
             roof_points = []
             for i in range(2):
